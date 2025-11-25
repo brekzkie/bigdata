@@ -1,0 +1,57 @@
+version: '3.8'
+
+services:
+  mongodb:
+    image: mongo:6
+    container_name: cryptodb_mongo
+    restart: always
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_DATABASE: cryptodb
+    volumes:
+      - mongodb_data:/data/db
+
+  data-collector:
+    build: ./collector
+    container_name: crypto_collector
+    restart: "no"
+    depends_on:
+      - mongodb
+    environment:
+      MONGO_HOST: mongodb
+      MONGO_PORT: 27017
+      MONGO_DB: cryptodb
+      MONGO_COLLECTION: coin_prices
+      PYTHONUNBUFFERED: 1
+    command: python -u main.py
+
+
+  jupyter:
+    image: jupyter/pyspark-notebook
+    container_name: crypto_jupyter
+    restart: always
+    ports:
+      - "8888:8888"
+    volumes:
+      - ./analysis:/home/jovyan/work
+    depends_on:
+      - mongodb
+    environment:
+      JUPYTER_TOKEN: analysis_token
+
+  airflow:
+    image: apache/airflow:2.8.1
+    container_name: crypto_airflow
+    restart: always
+    depends_on:
+      - mongodb
+    environment:
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+    ports:
+      - "8080:8080"
+    command: standalone
+volumes:
+  mongodb_data:
