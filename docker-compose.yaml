@@ -3,26 +3,26 @@ version: '3.8'
 services:
   mongodb:
     image: mongo:6
-    container_name: cryptodb_mongo
+    container_name: stock_prices_mongo
     restart: always
     ports:
       - "27017:27017"
     environment:
-      MONGO_INITDB_DATABASE: cryptodb
+      MONGO_INITDB_DATABASE: stock_prices
     volumes:
       - mongodb_data:/data/db
 
   data-collector:
     build: ./collector
-    container_name: crypto_collector
-    restart: "no"
+    container_name: stock_prices_collector
+    restart: "always"
     depends_on:
       - mongodb
     environment:
-      MONGO_HOST: mongodb
+      MONGO_HOST: stock_prices_mongo
       MONGO_PORT: 27017
-      MONGO_DB: cryptodb
-      MONGO_COLLECTION: coin_prices
+      MONGO_DB: stock_prices
+      MONGO_COLLECTION: stock_prices
       PYTHONUNBUFFERED: 1
     command: python -u main.py
 
@@ -42,16 +42,29 @@ services:
 
   airflow:
     image: apache/airflow:2.8.1
-    container_name: crypto_airflow
+    container_name: stock_airflow
     restart: always
     depends_on:
       - mongodb
     environment:
+      AIRFLOW__CORE__EXECUTOR: SequentialExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: sqlite:////opt/airflow/airflow.db
       AIRFLOW__CORE__LOAD_EXAMPLES: "False"
     volumes:
       - ./airflow/dags:/opt/airflow/dags
     ports:
       - "8080:8080"
-    command: standalone
+    command: >
+      bash -c "
+      airflow db init &&
+      airflow users create
+        --username admin
+        --password admin
+        --firstname Admin
+        --lastname User
+        --role Admin
+        --email admin@mail.com || true &&
+      airflow scheduler & airflow webserver
+      "
 volumes:
   mongodb_data:
