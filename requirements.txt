@@ -1,0 +1,8 @@
+apache-airflow
+pandas
+numpy
+yfinance
+scikit-learn
+statsmodels
+requests
+supabase

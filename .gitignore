@@ -1,0 +1,9 @@
+env/
+venv/
+.env
+__pycache__/
+*.pyc
+logs/
+plugins/
+docker-context-files/
+.ipynb_checkpoints/

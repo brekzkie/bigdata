@@ -1,0 +1,14 @@
+requests
+pandas
+yfinance
+
+# Supabase stack
+supabase
+gotrue
+postgrest
+storage3
+realtime
+
+# Mongo
+pymongo
+python-dotenv

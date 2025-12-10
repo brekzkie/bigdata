@@ -1,0 +1,12 @@
+FROM apache/airflow:2.8.1
+
+USER root
+RUN pip install requests pandas pymongo
+
+USER airflow
+pandas
+numpy
+scikit-learn
+sqlalchemy
+psycopg2-binary  # atau supabase client
+ta               # library teknikal analisis (opsional, tapi sangat membantu)
