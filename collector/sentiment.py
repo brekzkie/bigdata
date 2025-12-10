@@ -1,57 +1,95 @@
+import os
+import sys
+import time
+import traceback
+from dotenv import load_dotenv
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
-from transformers import pipeline
-from pymongo import MongoClient
-import os, math
-from datetime import datetime
+from supabase import create_client, Client
 
-MONGO_URI = os.environ.get("MONGO_URI", "mongodb://stock_prices_mongo:27017/")
-DB = os.environ.get("MONGO_DB", "stock_prices")
+# --- 1. LOAD ENV (HARDCODE PATH) ---
+# Kita gunakan cara yang sama dengan news_fetcher agar pasti berhasil
+env_path = r"C:\bigdata-main1\.env"
 
-analyzer = SentimentIntensityAnalyzer()
-# load transformer once (costly)
+print(f"🔍 DEBUG: Membaca file kunci di: {env_path}")
+if os.path.exists(env_path):
+    load_dotenv(dotenv_path=env_path, override=True)
+else:
+    print("❌ DEBUG: File .env TIDAK DITEMUKAN!")
+
+# --- 2. SETUP VARIABLE & LIBRARY ---
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+SUPABASE_TABLE = "news_sentiment"  # Pastikan nama tabel benar
+
+if not SUPABASE_URL or not SUPABASE_KEY:
+    print("❌ ERROR: Kunci Supabase belum diset di .env")
+    sys.exit(1)
+
 try:
-    tf_pipe = pipeline("sentiment-analysis", model="cardiffnlp/twitter-roberta-base-sentiment")
-except Exception:
-    tf_pipe = None
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+    analyzer = SentimentIntensityAnalyzer() # Inisialisasi otak sentimen
+except Exception as e:
+    print(f"❌ Gagal inisialisasi: {e}")
+    sys.exit(1)
 
-def analyze_text(text):
-    res = {}
-    vader = analyzer.polarity_scores(text)
-    res["vader"] = vader
+# --- 3. FUNGSI UTAMA ---
+def run_sentiment_analysis():
+    print("🧠 Sentiment Analyzer started...", flush=True)
+    
+    # 1. Ambil berita yang sentimennya masih KOSONG (NULL)
+    try:
+        # Ambil max 50 berita sekaligus biar cepat
+        response = supabase.table(SUPABASE_TABLE)\
+            .select("*")\
+            .is_("sentiment_score", "null")\
+            .limit(50)\
+            .execute()
+        
+        articles = response.data
+        print(f"   Ditemukan {len(articles)} berita yang perlu dinilai.")
+        
+    except Exception as e:
+        print(f"❌ Gagal ambil data dari DB: {e}")
+        return
 
-    transformer = None
-    if tf_pipe:
-        out = tf_pipe(text[:512])  # truncate
-        transformer = out[0]
-    res["transformer"] = transformer
-    # derive label + confidence
-    if transformer:
-        label = transformer.get("label")
-        conf = transformer.get("score", 0.0)
-    else:
-        c = vader["compound"]
-        if c >= 0.05: label = "POSITIVE"
-        elif c <= -0.05: label = "NEGATIVE"
-        else: label = "NEUTRAL"
-        conf = abs(c)
-    return {"label": label, "confidence": float(conf), "raw": res}
+    # 2. Proses Analisis
+    if not articles:
+        print("✅ Tidak ada berita baru untuk dianalisis.")
+        return
 
-def run_sentiment_batch(limit=200):
-    client = MongoClient(MONGO_URI)
-    db = client[DB]
-    raw = db.news_raw
-    outc = db.news_sentiment
+    success_count = 0
+    
+    for article in articles:
+        try:
+            # Gabungkan Judul + Deskripsi untuk analisis lebih akurat
+            text = f"{article.get('title', '')} {article.get('description', '')}"
+            
+            # Hitung skor (-1.0 s/d 1.0)
+            vs = analyzer.polarity_scores(text)
+            compound_score = vs['compound']
+            
+            # Tentukan Label
+            if compound_score >= 0.05:
+                label = "POSITIVE"
+            elif compound_score <= -0.05:
+                label = "NEGATIVE"
+            else:
+                label = "NEUTRAL"
 
-    cursor = raw.find({"_id": {"$nin": [d["article_id"] for d in outc.find({}, {"article_id":1}).limit(10000)]}}).limit(limit)
-    for art in cursor:
-        txt = (art.get("title","") or "") + ". " + (art.get("description") or "") + " " + (art.get("content") or "")
-        s = analyze_text(txt)
-        doc = {
-            "article_id": art["_id"],
-            "symbol": art.get("symbol"),
-            "sentiment": s["raw"],
-            "sentiment_label": s["label"].lower(),
-            "confidence": s["confidence"],
-            "analyzed_at": datetime.utcnow()
-        }
-        outc.update_one({"article_id": art["_id"]}, {"$set": doc}, upsert=True)
+            # Update ke Database
+            supabase.table(SUPABASE_TABLE).update({
+                "sentiment_score": compound_score,
+                "sentiment_label": label
+            }).eq("id", article['id']).execute()
+            
+            print(f"   ✅ ID {article['id']}: {label} (Score: {compound_score})")
+            success_count += 1
+            
+        except Exception as e:
+            print(f"   ⚠️ Gagal update ID {article.get('id')}: {e}")
+            continue
+
+    print(f"🏁 Selesai. Berhasil menilai {success_count} berita.")
+
+if __name__ == "__main__":
+    run_sentiment_analysis()
